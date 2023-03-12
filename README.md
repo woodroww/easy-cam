@@ -1,4 +1,4 @@
-# default_cube
+# easy-cam
 
 
 ## License
