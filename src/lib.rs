@@ -1,8 +1,9 @@
-use bevy::ecs::schedule::ShouldRun;
 use bevy::input::mouse::{MouseMotion, MouseWheel};
 use bevy::prelude::*;
-use bevy_inspector_egui::bevy_egui::{egui, EguiContext};
-use bevy_transform_gizmo::{GizmoPickSource, GizmoSettings, GizmoPartsEnabled};
+use bevy::window::PrimaryWindow;
+use bevy_inspector_egui::bevy_egui::egui;
+use bevy_egui::EguiContexts;
+use bevy_transform_gizmo::{GizmoPartsEnabled, GizmoPickSource, GizmoSettings};
 
 #[derive(Default)]
 pub struct CameraPlugin;
@@ -13,10 +14,10 @@ struct CameraData {
     ui_show_transform_or_scale: TransformOrScale,
 }
 
-#[derive(Clone, Hash, PartialEq, Eq, Debug, RunCriteriaLabel)]
+#[derive(Clone, Hash, PartialEq, Eq, Debug)]
 struct CameraRunCriteria;
 
-#[derive(Debug, Hash, PartialEq, Eq, Clone, SystemLabel)]
+#[derive(Debug, Hash, PartialEq, Eq, Clone, SystemSet)]
 pub enum CameraSystem {
     PanOrbit,
     Adjust,
@@ -53,26 +54,19 @@ impl Default for PanOrbitCamera {
 impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugin(bevy_transform_gizmo::TransformGizmoPlugin)
-        .add_system_set_to_stage(
-            CoreStage::Update,
-            SystemSet::new()
-                .with_run_criteria(plugin_enabled.label(CameraRunCriteria))
-                .with_system(pan_orbit_camera.label(CameraSystem::PanOrbit))
-                    /*
-                .with_system(
-                    adjust
-                        .label(CameraSystem::Adjust)
-                        .after(CameraSystem::PanOrbit),
-                )
-                    */
-                .with_system(center_selection)
+            .add_systems(
+                (pan_orbit_camera, center_selection)
+                    .chain()
+                    .in_base_set(CoreSet::Update)
+                    //.run_if(plugin_enabled),
             )
-        .add_system(ui_system.label(CameraSystem::UISytem).after(CameraSystem::Adjust))
-        .add_system(update_gizmo_space.label(CameraSystem::UpdateSpace).after(CameraSystem::UISytem))
-        .insert_resource(CameraData {
-            transform_orientation: GizmoSpace::Global,
-            ui_show_transform_or_scale: TransformOrScale::Transform,
-        });
+            .add_systems(
+                (ui_system, update_gizmo_space).chain()
+            )
+            .insert_resource(CameraData {
+                transform_orientation: GizmoSpace::Global,
+                ui_show_transform_or_scale: TransformOrScale::Transform,
+            });
     }
 }
 
@@ -103,11 +97,11 @@ fn center_selection(
 
 /// Disable this plugin and bevy_mod_picking plugin if the cursor is in a egui window
 fn plugin_enabled(
-    mut egui_context: ResMut<EguiContext>,
+    mut egui_contexts: EguiContexts,
     mut state: ResMut<bevy_mod_picking::PickingPluginsState>,
-) -> ShouldRun {
+) -> bool {
     // don't adjust camera if the mouse pointer in over an egui window
-    let ctx = egui_context.ctx_mut();
+    let ctx = egui_contexts.ctx_mut();
     let pointer_over_area = ctx.is_pointer_over_area();
     let using_pointer = ctx.is_using_pointer();
     let wants_pointer = ctx.wants_pointer_input();
@@ -116,12 +110,12 @@ fn plugin_enabled(
         state.enable_picking = false;
         //state.enable_highlighting = false;
         state.enable_interacting = false;
-        ShouldRun::No
+        false
     } else {
         state.enable_picking = true;
         //state.enable_highlighting = true;
         state.enable_interacting = true;
-        ShouldRun::Yes
+        true
     }
 }
 
@@ -133,12 +127,12 @@ enum TransformOrScale {
 }
 
 fn ui_system(
-    mut egui_context: ResMut<EguiContext>,
+    mut egui_context: EguiContexts,
     mut app_assets: ResMut<CameraData>,
     mut enabled_systems: ResMut<GizmoPartsEnabled>,
 ) {
     let mut selected = app_assets.transform_orientation;
-    let mut showing = app_assets.ui_show_transform_or_scale; 
+    let mut showing = app_assets.ui_show_transform_or_scale;
     egui::Window::new("Transform Gizmo").show(egui_context.ctx_mut(), |ui| {
         egui::ComboBox::from_label("Orientation")
             .selected_text(format!("{:?}", selected))
@@ -173,13 +167,24 @@ fn ui_system(
 }
 
 fn pan_orbit_camera(
-    windows: Res<Windows>,
+    window: Query<&Window, With<PrimaryWindow>>,
     mut ev_motion: EventReader<MouseMotion>,
     mut ev_scroll: EventReader<MouseWheel>,
     input_mouse: Res<Input<MouseButton>>,
     mut query: Query<(&mut PanOrbitCamera, &mut Transform, &Projection)>,
     keyboard_input: Res<Input<KeyCode>>,
 ) {
+
+    let window = match window.get_single() {
+        Ok(window) => {
+            window
+        }
+        Err(err) => {
+            error!("couldn't get primary window {}", err);
+            return;
+        }
+    };
+
     // change input mapping for orbit and panning here
     let orbit_button = MouseButton::Middle;
     let pan_button = MouseButton::Middle;
@@ -223,26 +228,30 @@ fn pan_orbit_camera(
         let mut any = false;
         if rotation_move.length_squared() > 0.0 {
             any = true;
-            let window = get_primary_window_size(&windows);
+            let primary_window_size = Vec2::new(window.width() as f32, window.height() as f32);
             let delta_x = {
-                let delta = rotation_move.x / window.x * std::f32::consts::PI * 2.0;
+                let delta = rotation_move.x / primary_window_size.x * std::f32::consts::PI * 2.0;
                 if pan_orbit.upside_down {
                     -delta
                 } else {
                     delta
                 }
             };
-            let delta_y = rotation_move.y / window.y * std::f32::consts::PI;
+            let delta_y = rotation_move.y / primary_window_size.y * std::f32::consts::PI;
             let yaw = Quat::from_rotation_y(-delta_x);
             let pitch = Quat::from_rotation_x(-delta_y);
             transform.rotation = yaw * transform.rotation; // rotate around global y axis
             transform.rotation = transform.rotation * pitch; // rotate around local x axis
+
         } else if pan.length_squared() > 0.0 {
+
             any = true;
             // make panning distance independent of resolution and FOV,
-            let window = get_primary_window_size(&windows);
+            //let window = get_primary_window_size(&windows);
+            let primary_window_size = Vec2::new(window.width() as f32, window.height() as f32);
+
             if let Projection::Perspective(projection) = projection {
-                pan *= Vec2::new(projection.fov * projection.aspect_ratio, projection.fov) / window;
+                pan *= Vec2::new(projection.fov * projection.aspect_ratio, projection.fov) / primary_window_size;
             }
             // translate by local axes
             let right = transform.rotation * Vec3::X * -pan.x;
@@ -325,10 +334,4 @@ fn update_gizmo_space(
             },*/
         }
     }
-}
-
-fn get_primary_window_size(windows: &Res<Windows>) -> Vec2 {
-    let window = windows.get_primary().unwrap();
-    let window = Vec2::new(window.width() as f32, window.height() as f32);
-    window
 }
