@@ -2,7 +2,7 @@ use bevy::input::mouse::{MouseMotion, MouseWheel};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy_inspector_egui::bevy_egui::egui;
-use bevy_egui::EguiContexts;
+use bevy_egui::{EguiContexts, EguiContext};
 use bevy_transform_gizmo::{GizmoPartsEnabled, GizmoPickSource, GizmoSettings};
 
 #[derive(Default)]
@@ -53,15 +53,14 @@ impl Default for PanOrbitCamera {
 
 impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugin(bevy_transform_gizmo::TransformGizmoPlugin)
+        app
             .add_systems(
-                (pan_orbit_camera, center_selection)
+                (pan_orbit_camera.run_if(plugin_enabled), center_selection.run_if(plugin_enabled))
                     .chain()
                     .in_base_set(CoreSet::Update)
-                    //.run_if(plugin_enabled),
             )
             .add_systems(
-                (ui_system, update_gizmo_space).chain()
+                (update_picking_state, ui_system, update_gizmo_space).chain()
             )
             .insert_resource(CameraData {
                 transform_orientation: GizmoSpace::Global,
@@ -97,25 +96,53 @@ fn center_selection(
 
 /// Disable this plugin and bevy_mod_picking plugin if the cursor is in a egui window
 fn plugin_enabled(
-    mut egui_contexts: EguiContexts,
-    mut state: ResMut<bevy_mod_picking::PickingPluginsState>,
+    egui_contexts: Query<&EguiContext>,
 ) -> bool {
     // don't adjust camera if the mouse pointer in over an egui window
-    let ctx = egui_contexts.ctx_mut();
-    let pointer_over_area = ctx.is_pointer_over_area();
-    let using_pointer = ctx.is_using_pointer();
-    let wants_pointer = ctx.wants_pointer_input();
+    match egui_contexts.get_single() {
+        Ok(context) => {
+            let ctx = context.get(); //.ctx_mut();
+            let pointer_over_area = ctx.is_pointer_over_area();
+            let using_pointer = ctx.is_using_pointer();
+            let wants_pointer = ctx.wants_pointer_input();
+            if wants_pointer || pointer_over_area || using_pointer {
+                false
+            } else {
+                true
+            }
+        }
+        Err(err) => {
+            error!("no egui context in easy-cam plugin_enabled, {}", err);
+            false
+        }
+    }
+}
 
-    if wants_pointer || pointer_over_area || using_pointer {
-        state.enable_picking = false;
-        //state.enable_highlighting = false;
-        state.enable_interacting = false;
-        false
-    } else {
-        state.enable_picking = true;
-        //state.enable_highlighting = true;
-        state.enable_interacting = true;
-        true
+fn update_picking_state(
+    mut state: ResMut<bevy_mod_picking::PickingPluginsState>,
+    egui_contexts: Query<&EguiContext>,
+) {
+    // disable picking plugin if mouse is being used for egui
+    // so clicks in egui will not alter any picking selections
+    match egui_contexts.get_single() {
+        Ok(context) => {
+            let ctx = context.get(); //.ctx_mut();
+            let pointer_over_area = ctx.is_pointer_over_area();
+            let using_pointer = ctx.is_using_pointer();
+            let wants_pointer = ctx.wants_pointer_input();
+            if wants_pointer || pointer_over_area || using_pointer {
+                state.enable_picking = false;
+                state.enable_highlighting = false;
+                state.enable_interacting = false;
+            } else {
+                state.enable_picking = true;
+                state.enable_highlighting = true;
+                state.enable_interacting = true;
+            }
+        }
+        Err(err) => {
+            error!("no egui context in easy-cam update_picking_state, {}", err);
+        }
     }
 }
 
