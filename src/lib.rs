@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy_inspector_egui::bevy_egui::egui;
 use bevy_egui::{EguiContexts, EguiContext};
-use bevy_transform_gizmo::{GizmoPartsEnabled, GizmoPickSource, GizmoSettings};
+use bevy_transform_gizmo::{GizmoPickSource, GizmoSettings};
 
 #[derive(Default)]
 pub struct CameraPlugin;
@@ -53,14 +53,15 @@ impl Default for PanOrbitCamera {
 
 impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
+        info!("CameraPlugin build");
         app
             .add_systems(
                 (pan_orbit_camera.run_if(plugin_enabled), center_selection.run_if(plugin_enabled))
                     .chain()
-                    .in_base_set(CoreSet::Update)
+                    .in_base_set(CoreSet::PreUpdate)
             )
             .add_systems(
-                (update_picking_state, ui_system, update_gizmo_space).chain()
+                (update_picking_state, /*ui_system, */ update_gizmo_space.run_if(resource_exists::<GizmoSettings>())).chain()
             )
             .insert_resource(CameraData {
                 transform_orientation: GizmoSpace::Global,
@@ -130,6 +131,7 @@ fn update_picking_state(
             let pointer_over_area = ctx.is_pointer_over_area();
             let using_pointer = ctx.is_using_pointer();
             let wants_pointer = ctx.wants_pointer_input();
+            /*
             if wants_pointer || pointer_over_area || using_pointer {
                 state.enable_picking = false;
                 state.enable_highlighting = false;
@@ -139,6 +141,7 @@ fn update_picking_state(
                 state.enable_highlighting = true;
                 state.enable_interacting = true;
             }
+            */
         }
         Err(err) => {
             error!("no egui context in easy-cam update_picking_state, {}", err);
@@ -153,6 +156,7 @@ enum TransformOrScale {
     Neither,
 }
 
+/*
 fn ui_system(
     mut egui_context: EguiContexts,
     mut app_assets: ResMut<CameraData>,
@@ -192,6 +196,7 @@ fn ui_system(
     app_assets.transform_orientation = selected;
     // update_gizmo_space(selection, selected, gizmo, camera);
 }
+*/
 
 fn pan_orbit_camera(
     window: Query<&Window, With<PrimaryWindow>>,
